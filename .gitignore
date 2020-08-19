@@ -1,10 +1,15 @@
+
 # Logs
 logs
 *.log
 npm-debug.log*
+
+# Built files
 /**/*.js
 /**/*.js.map
 
+# Databse
+database.sqlite
 
 # Dependencies
 node_modules/
