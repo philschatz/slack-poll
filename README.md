@@ -5,6 +5,8 @@
 [![Build Status - Travis][travis-badge]][travis-ci]
 [![Build Status - GitHub Actions][gha-badge]][gha-ci]
 
+App Configuration: https://api.slack.com/apps/A0195GRS075
+
 # node-typescript-boilerplate
 
 👩🏻‍💻 Developer Ready: A comprehensive template. Works out of the box for most [Node.js][nodejs] projects.
