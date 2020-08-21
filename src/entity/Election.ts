@@ -15,8 +15,17 @@ export class Election {
     @CreateDateColumn()
     created_at: Date
 
+    @Column({nullable: true})
+    published_at: (Date | null)
+
     @Column()
-    question: string;
+    slack_team: string
+
+    @Column()
+    slack_user: string
+
+    @Column()
+    description: string;
 
     @Column(arrayOptions)
     options: string[]
