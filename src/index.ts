@@ -8,6 +8,10 @@ import { Election } from './entity/Election'
 
 const slackCommand = 'poll'
 
+const mtext = (text: string) => ({ type: 'mrkdwn', text })
+const ptext = (text: string) => ({ emoji: true, type: 'plain_text', text })
+const cmdIndex = (command: string, index: number) => JSON.stringify({command, index})
+
 createConnection().then(async connection => {
   console.log('Inserting a new user into the database...')
   const user = new User()
@@ -40,9 +44,6 @@ createConnection().then(async connection => {
     signingSecret: process.env.SLACK_SIGNING_SECRET,
     logLevel: LogLevel.DEBUG
   })
-
-  const mtext = (text: string) => ({ type: 'mrkdwn', text })
-  const ptext = (text: string) => ({ emoji: true, type: 'plain_text', text })
 
   app.command(`/${slackCommand}`, async ({ command, ack, context, client }) => {
     // Acknowledge the command request
@@ -80,12 +81,9 @@ createConnection().then(async connection => {
         type: 'section',
         text: mtext(`*Description:* ${description}`),
         accessory: {
-          type: 'overflow',
-          action_id: 'ELECTION_OVERFLOW',
-          options: [
-            { value: 'EDIT', text: ptext(':writing_hand: Edit Description') },
-            { value: 'DELETE', text: ptext(':x: Delete Poll') }
-          ]
+          type: 'button',
+          action_id: 'EDIT_DESCRIPTION',
+          text: ptext('Edit'),
         }
       },
 
@@ -98,15 +96,15 @@ createConnection().then(async connection => {
 
       ...CANDIDATE_NAMES.map((name, index) => {
         const options = [
-          { value: 'EDIT', text: ptext(':writing_hand: Edit Option') },
-          { value: 'DELETE', text: ptext(':x: Delete Option') }
+          { value: cmdIndex('EDIT_OPTION', index), text: ptext(':writing_hand: Edit Option') },
+          { value: cmdIndex('DELETE_OPTION', index), text: ptext(':x: Delete Option') }
         ]
 
         if (index > 0) {
-          options.push({ value: 'MOVE_UP', text: ptext(':arrow_up: Move Up') })
+          options.push({ value: cmdIndex('MOVE_UP', index), text: ptext(':arrow_up: Move Up') })
         }
         if (index < CANDIDATE_NAMES.length - 1) {
-          options.push({ value: 'MOVE_DOWN', text: ptext(':arrow_down: Move Down') })
+          options.push({ value: cmdIndex('MOVE_DOWN', index), text: ptext(':arrow_down: Move Down') })
         }
 
         return {
@@ -114,7 +112,7 @@ createConnection().then(async connection => {
           text: mtext(name),
           accessory: {
             type: 'overflow',
-            action_id: `CANDIDATE-${index}`,
+            action_id: `EDIT_CANDIDATE`,
             options
           }
         }
@@ -125,7 +123,7 @@ createConnection().then(async connection => {
       {
         type: 'section',
         text: mtext('*Settings:* Anonymous, Ranked, 4 Winners'),
-        accessory: { type: 'button', text: ptext('Edit'), value: 'EDIT_SETTINGS' }
+        accessory: { type: 'button', text: ptext('Edit'), action_id: 'EDIT_SETTINGS' }
       },
 
       { type: 'divider' },
@@ -143,14 +141,14 @@ createConnection().then(async connection => {
         text: mtext('the option text is here :apple:'),
         accessory: {
           type: 'static_select',
-          action_id: 'CANDIDATE_1',
+          action_id: 'RANK_CANDIDATE',
           placeholder: ptext('Rank the Candidate'),
           initial_option: none,
           options: [
             none,
-            { text: ptext('1'), value: 'VALUE_1' },
-            { text: ptext('2'), value: 'VALUE_2' },
-            { text: ptext('3'), value: 'VALUE_3' }
+            { text: ptext('1'), value: JSON.stringify(1) },
+            { text: ptext('2'), value: JSON.stringify(2) },
+            { text: ptext('3'), value: JSON.stringify(3) }
           ]
         }
       }
@@ -166,7 +164,48 @@ createConnection().then(async connection => {
     })
   });
 
-  (async () => {
+  app.action('ELECTION_OVERFLOW', async ({ ack, payload, /*say, respond*/ }) => {
+    await ack();
+    // always true
+    if (payload.type !== 'overflow') {
+      throw new Error('BUG!')
+    }
+
+    console.log('Pressed', payload.selected_option.value)
+  })
+
+  app.action('EDIT_DESCRIPTION', async ({ ack, payload, /*say, respond*/ }) => {
+    await ack();
+    console.log('--------', payload)
+  })
+
+  app.action('EDIT_CANDIDATE', async ({ ack, payload, /*say, respond*/ }) => {
+    await ack();
+    console.log('--------', payload)
+  })
+
+  app.action('EDIT_SETTINGS', async ({ ack, payload, /*say, respond*/ }) => {
+    await ack();
+    console.log('----------------', payload)
+  })
+
+  app.action('PUBLISH', async ({ ack, payload, /*say, respond*/ }) => {
+    await ack();
+    console.log('-------', payload)
+  })
+
+  app.action('DELETE', async ({ ack, payload, /*say, respond*/ }) => {
+    await ack();
+    console.log('------------', payload)
+  })
+
+  app.action('RANK_CANDIDATE', async ({ ack, payload, /*say, respond*/ }) => {
+    await ack();
+    console.log('------------', payload)
+  })
+
+
+  ;(async () => {
     // Start your app
     await app.start(process.env.PORT || 3000)
 
