@@ -28,6 +28,18 @@ function moveDown<T> (arr: T[], index: number) {
   }
 }
 
+const toNth = (n: number) => {
+  switch (n) {
+    case 0: return 'Zeroth'
+    case 1: return 'First'
+    case 2: return 'Second'
+    case 3: return 'Third'
+    case 4: return 'Fourth'
+    default:
+      return `${n}th`
+  }
+}
+
 const buildDraftBlocks = (context: Election) => {
   const deleteConfirm = {
     style: 'danger',
@@ -50,7 +62,7 @@ const buildDraftBlocks = (context: Election) => {
       text: mtext(`*Description:* ${context.description}`),
       accessory: {
         type: 'button',
-        action_id: 'EDIT_DESCRIPTION_POPUP',
+        action_id: 'EDIT_ELECTION_POPUP',
         text: ptext('Edit')
       }
     },
@@ -64,8 +76,8 @@ const buildDraftBlocks = (context: Election) => {
 
     ...context.options.map((name, index) => {
       const options = [
-        { value: cmdIdValue('EDIT_OPTION', index), text: ptext(':writing_hand: Edit Option') },
-        { value: cmdIdValue('DELETE_OPTION', index), text: ptext(':x: Delete Option') }
+        // { value: cmdIdValue('EDIT_OPTION', index), text: ptext(':writing_hand: Edit Option') },
+        // { value: cmdIdValue('DELETE_OPTION', index), text: ptext(':x: Delete Option') }
       ]
 
       if (index > 0) {
@@ -99,6 +111,7 @@ const buildDraftBlocks = (context: Election) => {
     {
       type: 'actions',
       elements: [
+        { type: 'button', text: ptext(':heavy_plus_sign: Add Option'), action_id: 'ADD_CANDIDATE_POPUP' },
         { type: 'button', text: ptext('Publish'), action_id: 'PUBLISH' },
         { type: 'button', text: ptext(':x: Delete'), action_id: 'DELETE', style: 'danger', confirm: deleteConfirm }
       ]
@@ -151,7 +164,9 @@ createConnection().then(async connection => {
       election.options = [
         ':apple: Apple',
         ':banana: Banana',
-        ':cherries: Cherry'
+        ':cherries: Cherry',
+        ':t-rex: Dinosaur',
+        ':elephant: Elephant'
       ]
       await connection.manager.save([election])
     }
@@ -189,7 +204,7 @@ createConnection().then(async connection => {
     })
   })
 
-  app.action('EDIT_DESCRIPTION_POPUP', async ({ ack, body, context }) => {
+  app.action('EDIT_ELECTION_POPUP', async ({ ack, body, context }) => {
     if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
     await ack()
 
@@ -218,6 +233,34 @@ createConnection().then(async connection => {
               initial_value: election.description,
               multiline: true
             }
+          },
+          { type: 'section', text: ptext('Choices:\nEnter the candidate or clear the contents to remove the option.') },
+
+          // Generate 1 textbox for each choice
+          ...election.options.map((candidate, i) => ({
+            type: 'input',
+            optional: true,
+            block_id: `THE_CANDIDATE:${i}`,
+            label: ptext(`${toNth(i + 1)} Choice`),
+            element: {
+              type: 'plain_text_input',
+              action_id: 'EDIT_CANDIDATE',
+              placeholder: ptext('This is what voters will see. (e.g. Grace Hopper)'),
+              initial_value: candidate
+            }
+          })),
+
+          // Add a new candidate
+          {
+            type: 'input',
+            optional: true,
+            block_id: 'THE_CANDIDATE:NEW',
+            label: ptext('New Choice'),
+            element: {
+              type: 'plain_text_input',
+              action_id: 'EDIT_CANDIDATE',
+              placeholder: ptext('This is what voters will see. (e.g. Grace Hopper)')
+            }
           }
         ]
       }
@@ -227,17 +270,64 @@ createConnection().then(async connection => {
   app.view('EDIT_DESCRIPTION_MODAL', async ({ ack, view, context, body }) => {
     ack()
 
+    console.log(view.state.values)
+
     const election = await getDraftElection(body.team.id, body.user.id)
-    const newDescription = view.state.values.THE_DESCRIPTION_INPUT.EDIT_DESCRIPTION_TEXT.value
+    election.description = view.state.values.THE_DESCRIPTION_INPUT.EDIT_DESCRIPTION_TEXT.value
+
+    const optionKeys = Object.keys(view.state.values).filter(v => v.startsWith('THE_CANDIDATE:'))
+    election.options = optionKeys.map(k => view.state.values[k].EDIT_CANDIDATE.value).filter(o => !!o) // remove blank entries
+
+    await connection.manager.save(election)
 
     const { channelId, messageTs } = JSON.parse(view.private_metadata)
+    await doUpdate(election, context, channelId, messageTs)
+  })
 
-    if (election.description !== newDescription) {
-      election.description = newDescription
+  app.action('ADD_CANDIDATE_POPUP', async ({ ack, body, context }) => {
+    if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
+    await ack()
 
-      await connection.manager.save(election)
-      await doUpdate(election, context, channelId, messageTs)
-    }
+    const originalMessage = JSON.stringify({ channelId: body.container.channel_id, messageTs: body.container.message_ts })
+
+    await app.client.views.open({
+      token: context.botToken,
+      trigger_id: body.trigger_id,
+      view: {
+        private_metadata: originalMessage,
+        type: 'modal',
+        callback_id: 'ADD_CANDIDATE_MODAL',
+        title: ptext('Add Another Choice'),
+        close: ptext('Cancel'),
+        submit: ptext('Save'),
+        blocks: [
+          {
+            type: 'input',
+            block_id: 'THE_CANDIDATE_INPUT',
+            label: ptext('Enter a description for choice so people know what they are choosing'),
+            element: {
+              type: 'plain_text_input',
+              action_id: 'EDIT_CANDIDATE_TEXT',
+              placeholder: ptext('Enter a description of the choice')
+            }
+          }
+        ]
+      }
+    })
+  })
+
+  app.view('ADD_CANDIDATE_MODAL', async ({ ack, view, context, body }) => {
+    ack()
+
+    const election = await getDraftElection(body.team.id, body.user.id)
+    const newCandidate = view.state.values.THE_CANDIDATE_INPUT.EDIT_CANDIDATE_TEXT.value
+
+    election.options.push(newCandidate)
+
+    await connection.manager.save(election)
+
+    const { channelId, messageTs } = JSON.parse(view.private_metadata)
+    await doUpdate(election, context, channelId, messageTs)
   })
 
   app.action('EDIT_CANDIDATE', async (args) => {
