@@ -8,7 +8,7 @@ import { Election } from './entity/Election'
 const slackCommand = 'poll'
 
 const mtext = (text: string) => ({ type: 'mrkdwn', text })
-const ptext = (text: string) => ({ emoji: true, type: 'plain_text', text })
+const ptext = (text: string): {emoji: true, type: 'plain_text', text: string} => ({ emoji: true, type: 'plain_text', text })
 const cmdIdValue = (command: string, id: number, value?: number) => JSON.stringify({ command, id, value })
 const parseCmdIdValue = (json: string) => JSON.parse(json) as {command: string, id: number, value?: number}
 
@@ -50,7 +50,7 @@ const buildDraftBlocks = (context: Election) => {
       text: mtext(`*Description:* ${context.description}`),
       accessory: {
         type: 'button',
-        action_id: 'EDIT_DESCRIPTION',
+        action_id: 'EDIT_DESCRIPTION_POPUP',
         text: ptext('Edit')
       }
     },
@@ -134,7 +134,7 @@ createConnection().then(async connection => {
 
   // console.log('Here you can setup and run express/koa/any other framework.')
 
-  async function getDraftElection (teamId: string, userId: string, createIfNotFound: boolean) {
+  async function getDraftElection (teamId: string, userId: string, createIfNotFound?: true) {
     let election = await connection.manager.findOne(Election, {
       slack_team: teamId,
       slack_user: userId,
@@ -144,7 +144,6 @@ createConnection().then(async connection => {
     if (!election) {
       if (!createIfNotFound) { throw new Error('BUG: Draft election does not exist in the database for this user') }
 
-      console.log('Creating new Draft election')
       election = new Election()
       election.slack_team = teamId
       election.slack_user = userId
@@ -157,6 +156,17 @@ createConnection().then(async connection => {
       await connection.manager.save([election])
     }
     return election
+  }
+
+  async function doUpdate (election: Election, context, channelId: string, messageTs: string) {
+    await connection.manager.save(election)
+    await app.client.chat.update({
+      token: context.botToken,
+      channel: channelId,
+      ts: messageTs,
+      blocks: buildDraftBlocks(election),
+      text: 'Update Draft Poll'
+    })
   }
 
   // Initializes your app with your bot token and signing secret
@@ -179,19 +189,65 @@ createConnection().then(async connection => {
     })
   })
 
-  app.action('EDIT_DESCRIPTION', async ({ ack, payload }) => {
+  app.action('EDIT_DESCRIPTION_POPUP', async ({ ack, body, context }) => {
+    if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
     await ack()
-    console.log(payload.type, payload)
+
+    const originalMessage = JSON.stringify({ channelId: body.container.channel_id, messageTs: body.container.message_ts })
+    const election = await getDraftElection(body.team.id, body.user.id)
+
+    await app.client.views.open({
+      token: context.botToken,
+      trigger_id: body.trigger_id,
+      view: {
+        private_metadata: originalMessage,
+        type: 'modal',
+        callback_id: 'EDIT_DESCRIPTION_MODAL',
+        title: ptext('Edit Poll Description'),
+        close: ptext('Cancel'),
+        submit: ptext('Save'),
+        blocks: [
+          {
+            type: 'input',
+            block_id: 'THE_DESCRIPTION_INPUT',
+            label: ptext('Enter a description for your Poll so people know what they are voting on'),
+            element: {
+              type: 'plain_text_input',
+              action_id: 'EDIT_DESCRIPTION_TEXT',
+              placeholder: ptext('What is this a Poll for?'),
+              initial_value: election.description,
+              multiline: true
+            }
+          }
+        ]
+      }
+    })
+  })
+
+  app.view('EDIT_DESCRIPTION_MODAL', async ({ ack, view, context, body }) => {
+    ack()
+
+    const election = await getDraftElection(body.team.id, body.user.id)
+    const newDescription = view.state.values.THE_DESCRIPTION_INPUT.EDIT_DESCRIPTION_TEXT.value
+
+    const { channelId, messageTs } = JSON.parse(view.private_metadata)
+
+    if (election.description !== newDescription) {
+      election.description = newDescription
+
+      await connection.manager.save(election)
+      await doUpdate(election, context, channelId, messageTs)
+    }
   })
 
   app.action('EDIT_CANDIDATE', async (args) => {
     const { ack, payload, context, body } = args
     await ack()
 
-    if (body.type !== 'block_actions') { throw new Error('BUG!') }
-    if (payload.type !== 'overflow') { throw new Error('BUG!') }
+    if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
+    if (payload.type !== 'overflow') { throw new Error('Unreachable!') }
 
-    const election = await getDraftElection(body.user.team_id, body.user.id, false)
+    const election = await getDraftElection(body.user.team_id, body.user.id)
 
     const { command, id } = parseCmdIdValue(payload.selected_option.value)
     switch (command) {
@@ -205,14 +261,7 @@ createConnection().then(async connection => {
         // do nothing
     }
 
-    connection.manager.save(election)
-    await app.client.chat.update({
-      token: context.botToken,
-      channel: body.container.channel_id,
-      ts: body.container.message_ts,
-      blocks: buildDraftBlocks(election),
-      text: 'Update Draft Poll'
-    })
+    await doUpdate(election, context, body.container.channel_id, body.container.message_ts)
   })
 
   app.action('EDIT_SETTINGS', async ({ ack, payload }) => {
@@ -226,10 +275,10 @@ createConnection().then(async connection => {
   })
 
   app.action('DELETE', async ({ ack, body, context }) => {
-    if (body.type !== 'block_actions') { throw new Error('BUG!') }
+    if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
 
     await ack()
-    const election = await getDraftElection(body.user.team_id, body.user.id, false)
+    const election = await getDraftElection(body.user.team_id, body.user.id)
     await connection.manager.remove(election)
     await app.client.chat.delete({
       token: context.botToken,
@@ -240,7 +289,7 @@ createConnection().then(async connection => {
 
   app.action('RANK_CANDIDATE', async ({ ack, payload }) => {
     await ack()
-    if (payload.type !== 'static_select') { throw new Error('BUG!') }
+    if (payload.type !== 'static_select') { throw new Error('Unreachable!') }
     console.log(payload.action_id, parseCmdIdValue(payload.selected_option.value))
   })
 
