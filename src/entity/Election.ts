@@ -24,6 +24,12 @@ export class Election {
     @Column()
     slack_user: string
 
+    @Column({nullable: true}) // only because I am lazy and did not write migration scripts
+    slack_message_ts: string
+
+    @Column({nullable: true}) // only because I am lazy and did not write migration scripts
+    slack_channel_id: string
+
     @Column()
     description: string;
 

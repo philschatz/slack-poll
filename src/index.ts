@@ -4,6 +4,7 @@ import { App, LogLevel } from '@slack/bolt'
 import { createConnection } from 'typeorm'
 import { Ballot } from './entity/Ballot'
 import { Election } from './entity/Election'
+import { Installation } from './entity/Installation'
 
 const slackCommand = 'poll'
 
@@ -147,29 +148,28 @@ createConnection().then(async connection => {
 
   // console.log('Here you can setup and run express/koa/any other framework.')
 
-  async function getDraftElection (teamId: string, userId: string, createIfNotFound?: true) {
-    let election = await connection.manager.findOne(Election, {
+  function newElection () {
+    const election = new Election()
+    election.description = 'What are the best foods?'
+    election.options = [
+      ':apple: Apple',
+      ':banana: Banana',
+      ':cherries: Cherry',
+      ':t-rex: Dinosaur',
+      ':elephant: Elephant'
+    ]
+    return election
+  }
+
+  async function getDraftElection (teamId: string, messageTs: string, userId: string) {
+    console.log('Searching for', teamId, messageTs, userId)
+
+    const election = await connection.manager.findOneOrFail(Election, {
+      slack_message_ts: messageTs,
       slack_team: teamId,
       slack_user: userId,
       published_at: null
     })
-
-    if (!election) {
-      if (!createIfNotFound) { throw new Error('BUG: Draft election does not exist in the database for this user') }
-
-      election = new Election()
-      election.slack_team = teamId
-      election.slack_user = userId
-      election.description = 'What are the best foods?'
-      election.options = [
-        ':apple: Apple',
-        ':banana: Banana',
-        ':cherries: Cherry',
-        ':t-rex: Dinosaur',
-        ':elephant: Elephant'
-      ]
-      await connection.manager.save([election])
-    }
     return election
   }
 
@@ -186,22 +186,54 @@ createConnection().then(async connection => {
 
   // Initializes your app with your bot token and signing secret
   const app = new App({
-    token: process.env.SLACK_BOT_TOKEN,
+    // token: process.env.SLACK_BOT_TOKEN,
     signingSecret: process.env.SLACK_SIGNING_SECRET,
-    logLevel: LogLevel.DEBUG
+    clientId: process.env.SLACK_CLIENT_ID,
+    clientSecret: process.env.SLACK_CLIENT_SECRET,
+    stateSecret: process.env.SLACK_STATE_SECRET,
+    logLevel: LogLevel.DEBUG,
+    scopes: ['chat:write', 'chat:write.public', 'commands', 'im:write'],
+    installationStore: {
+      storeInstallation: async (installation) => {
+        const inst = new Installation()
+        inst.slack_team_id = installation.team.id
+        inst.slack_json = JSON.stringify(installation)
+        await connection.manager.save(inst)
+      },
+      fetchInstallation: async (InstallQuery) => {
+        const inst = await connection.manager.findOneOrFail(Installation, { slack_team_id: InstallQuery.teamId })
+        const json = JSON.parse(inst.slack_json)
+        return json
+      }
+    }
   })
 
   app.command(`/${slackCommand}`, async (args) => {
     const { ack, payload, say } = args
 
-    const election = await getDraftElection(payload.team_id, payload.user_id, true)
+    const election = newElection()
 
     await ack()
 
-    await say({
+    const result = await say({
       blocks: buildDraftBlocks(election),
       text: 'create a Poll'
     })
+
+    if (result.ok) {
+      const channelId = result.channel as string
+      const messageTs = result.ts as string
+
+      election.slack_message_ts = messageTs
+      election.slack_channel_id = channelId
+      election.slack_team = payload.team_id
+      election.slack_user = payload.user_id
+      await connection.manager.save(election)
+
+      console.log('Created', election.slack_team, election.slack_channel_id, election.slack_message_ts, election.slack_user)
+    } else {
+      throw new Error('ERROR: Could not create message')
+    }
   })
 
   app.action('EDIT_ELECTION_POPUP', async ({ ack, body, context }) => {
@@ -209,7 +241,7 @@ createConnection().then(async connection => {
     await ack()
 
     const originalMessage = JSON.stringify({ channelId: body.container.channel_id, messageTs: body.container.message_ts })
-    const election = await getDraftElection(body.team.id, body.user.id)
+    const election = await getDraftElection(body.team.id, body.message.ts, body.user.id)
 
     await app.client.views.open({
       token: context.botToken,
@@ -272,7 +304,9 @@ createConnection().then(async connection => {
 
     console.log(view.state.values)
 
-    const election = await getDraftElection(body.team.id, body.user.id)
+    const { channelId, messageTs } = JSON.parse(view.private_metadata)
+
+    const election = await getDraftElection(body.team.id, messageTs, body.user.id)
     election.description = view.state.values.THE_DESCRIPTION_INPUT.EDIT_DESCRIPTION_TEXT.value
 
     const optionKeys = Object.keys(view.state.values).filter(v => v.startsWith('THE_CANDIDATE:'))
@@ -280,7 +314,6 @@ createConnection().then(async connection => {
 
     await connection.manager.save(election)
 
-    const { channelId, messageTs } = JSON.parse(view.private_metadata)
     await doUpdate(election, context, channelId, messageTs)
   })
 
@@ -319,14 +352,14 @@ createConnection().then(async connection => {
   app.view('ADD_CANDIDATE_MODAL', async ({ ack, view, context, body }) => {
     ack()
 
-    const election = await getDraftElection(body.team.id, body.user.id)
+    const { channelId, messageTs } = JSON.parse(view.private_metadata)
+    const election = await getDraftElection(body.team.id, messageTs, body.user.id)
     const newCandidate = view.state.values.THE_CANDIDATE_INPUT.EDIT_CANDIDATE_TEXT.value
 
     election.options.push(newCandidate)
 
     await connection.manager.save(election)
 
-    const { channelId, messageTs } = JSON.parse(view.private_metadata)
     await doUpdate(election, context, channelId, messageTs)
   })
 
@@ -337,7 +370,7 @@ createConnection().then(async connection => {
     if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
     if (payload.type !== 'overflow') { throw new Error('Unreachable!') }
 
-    const election = await getDraftElection(body.user.team_id, body.user.id)
+    const election = await getDraftElection(body.user.team_id, body.message.ts, body.user.id)
 
     const { command, id } = parseCmdIdValue(payload.selected_option.value)
     switch (command) {
@@ -368,13 +401,13 @@ createConnection().then(async connection => {
     if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
 
     await ack()
-    const election = await getDraftElection(body.user.team_id, body.user.id)
-    await connection.manager.remove(election)
     await app.client.chat.delete({
       token: context.botToken,
       channel: body.container.channel_id,
       ts: body.container.message_ts
     })
+    const election = await getDraftElection(body.user.team_id, body.message.ts, body.user.id)
+    await connection.manager.remove(election)
   })
 
   app.action('RANK_CANDIDATE', async ({ ack, payload }) => {
