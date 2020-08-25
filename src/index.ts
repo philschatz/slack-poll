@@ -6,7 +6,15 @@ import { Ballot } from './entity/Ballot'
 import { Election } from './entity/Election'
 import { Installation } from './entity/Installation'
 
-const slackCommand = 'poll'
+const slackCommand = 'poll-ranked'
+
+const DEFAULT_CANDIDATES = [
+  ':apple: Apple',
+  ':banana: Banana',
+  ':cherries: Cherry',
+  ':doughnut: Doughnut',
+  ':egg: Egg'
+]
 
 const mtext = (text: string) => ({ type: 'mrkdwn', text })
 const ptext = (text: string): {emoji: true, type: 'plain_text', text: string} => ({ emoji: true, type: 'plain_text', text })
@@ -41,7 +49,7 @@ const toNth = (n: number) => {
   }
 }
 
-const buildDraftBlocks = (context: Election) => {
+const buildPollMessageBlcoks = (context: Election) => {
   const deleteConfirm = {
     style: 'danger',
     title: ptext('Delete Poll?'),
@@ -50,90 +58,58 @@ const buildDraftBlocks = (context: Election) => {
     deny: ptext('Cancel')
   }
 
+  let voterStats = []
+  if (context.ballots && context.ballots.length > 0) {
+    voterStats = [    {
+      type: 'section',
+      text: mtext(`Voters: ${context.ballots.map(b => `@${b.user_id}`).join(' ')}`)
+    }]
+  }
+
   return [
     {
       type: 'section',
-      text: mtext(':writing_hand: Edit *Draft Poll*')
+      text: mtext(`*${context.description}*`),
     },
-
-    { type: 'divider' },
 
     {
       type: 'section',
-      text: mtext(`*Description:* ${context.description}`),
-      accessory: {
-        type: 'button',
-        action_id: 'EDIT_ELECTION_POPUP',
-        text: ptext('Edit')
-      }
+      text: mtext(`Rank the options`),
     },
 
-    { type: 'divider' },
-
-    {
-      type: 'section',
-      text: mtext('*Choices:*')
-    },
-
-    ...context.options.map((name, index) => {
-      const options = [
-        // { value: cmdIdValue('EDIT_OPTION', index), text: ptext(':writing_hand: Edit Option') },
-        // { value: cmdIdValue('DELETE_OPTION', index), text: ptext(':x: Delete Option') }
-      ]
-
-      if (index > 0) {
-        options.push({ value: cmdIdValue('MOVE_UP', index), text: ptext(':arrow_up: Move Up') })
-      }
-      if (index < context.options.length - 1) {
-        options.push({ value: cmdIdValue('MOVE_DOWN', index), text: ptext(':arrow_down: Move Down') })
-      }
-
-      return {
-        type: 'section',
-        text: mtext(name),
-        accessory: {
-          type: 'overflow',
-          action_id: 'EDIT_CANDIDATE',
-          options
-        }
-      }
-    }),
-
-    { type: 'divider' },
-
-    {
-      type: 'section',
-      text: mtext('*Settings:* Anonymous, Ranked, 4 Winners'),
-      accessory: { type: 'button', text: ptext('Edit'), action_id: 'EDIT_SETTINGS' }
-    },
-
-    { type: 'divider' },
-
-    {
+    { 
       type: 'actions',
-      elements: [
-        { type: 'button', text: ptext(':heavy_plus_sign: Add Option'), action_id: 'ADD_CANDIDATE_POPUP' },
-        { type: 'button', text: ptext('Publish'), action_id: 'PUBLISH' },
-        { type: 'button', text: ptext(':x: Delete'), action_id: 'DELETE', style: 'danger', confirm: deleteConfirm }
-      ]
+      elements: context.options.map((name, index) => {
+        const options = [
+          // { value: cmdIdValue('EDIT_OPTION', index), text: ptext(':writing_hand: Edit Option') },
+          // { value: cmdIdValue('DELETE_OPTION', index), text: ptext(':x: Delete Option') }
+        ]
+  
+        if (index > 0) {
+          options.push({ value: cmdIdValue('MOVE_UP', index), text: ptext(':arrow_up: Move Up') })
+        }
+        if (index < context.options.length - 1) {
+          options.push({ value: cmdIdValue('MOVE_DOWN', index), text: ptext(':arrow_down: Move Down') })
+        }
+  
+        return {
+          type: 'button',
+          text: ptext(name),
+          action_id: `RANK_CANDIDATES_POPUP:${index}`
+        }
+      })
     },
 
+    // ...voterStats,
+
+    { type: 'divider' },
+
     {
-      type: 'section',
-      text: mtext(`the option text is here :apple: Random: ${Math.round(Math.random() * 1000)}`),
-      accessory: {
-        type: 'static_select',
-        action_id: 'RANK_CANDIDATE',
-        placeholder: ptext('Rank the Candidate'),
-        initial_option: { text: ptext('None'), value: cmdIdValue('RANK', 0, null) },
-        options: [
-          { text: ptext('None'), value: cmdIdValue('RANK', 0, null) },
-          { text: ptext('1'), value: cmdIdValue('RANK', 0, 1) },
-          { text: ptext('2'), value: cmdIdValue('RANK', 0, 2) },
-          { text: ptext('3'), value: cmdIdValue('RANK', 0, 3) }
-        ]
-      }
-    }
+      type: 'actions', 
+      elements: [
+        { type: 'button', text: ptext(':x: Delete Poll'), action_id: 'DELETE', style: 'danger', confirm: deleteConfirm },
+      ]
+    },
 
   ]
 }
@@ -155,31 +131,47 @@ createConnection().then(async connection => {
       ':apple: Apple',
       ':banana: Banana',
       ':cherries: Cherry',
-      ':t-rex: Dinosaur',
-      ':elephant: Elephant'
+      ':doughnut: Doughnut',
+      ':egg: Egg'
     ]
     return election
   }
 
-  async function getDraftElection (teamId: string, messageTs: string, userId: string) {
-    console.log('Searching for', teamId, messageTs, userId)
+  async function getDraftElection (teamId: string, messageTs: string) {
+    console.log('Searching for', teamId, messageTs)
 
     const election = await connection.manager.findOneOrFail(Election, {
       slack_message_ts: messageTs,
-      slack_team: teamId,
-      slack_user: userId,
-      published_at: null
+      slack_team_id: teamId,
     })
     return election
   }
 
-  async function doUpdate (election: Election, context, channelId: string, messageTs: string) {
+  async function getBallotOrNew(teamId: string,messageTs: string, userId: string) {
+    if (!teamId || !messageTs || !userId) {
+      throw new Error(`Missing args ${teamId} ${messageTs} ${userId}`)
+    }getBallotOrNew
+    console.log(`lookingfor ${teamId} ${messageTs} ${userId}`)
+    const election = await connection.manager.findOneOrFail(Election, {slack_team_id: teamId, slack_message_ts: messageTs})
+    let ballot = election.ballots.find(b => b.user_id === userId)
+    if (!ballot) {
+      ballot = new Ballot()
+      ballot.election = election
+      ballot.user_id = userId
+      ballot.ranked_choices = []
+    } else {
+      console.log('foundballot', ballot)
+    }
+    return ballot
+  }
+
+  async function doUpdate (election: Election, context) {
     await connection.manager.save(election)
     await app.client.chat.update({
       token: context.botToken,
-      channel: channelId,
-      ts: messageTs,
-      blocks: buildDraftBlocks(election),
+      channel: election.slack_channel_id,
+      ts: election.slack_message_ts,
+      blocks: buildPollMessageBlcoks(election),
       text: 'Update Draft Poll'
     })
   }
@@ -209,48 +201,20 @@ createConnection().then(async connection => {
   })
 
   app.command(`/${slackCommand}`, async (args) => {
-    const { ack, payload, say } = args
-
-    const election = newElection()
-
+    const { ack, context, body } = args
     await ack()
 
-    const result = await say({
-      blocks: buildDraftBlocks(election),
-      text: 'create a Poll'
-    })
+    const originalMessage = JSON.stringify({ channelId: body.channel_id, userId: body.user_id })
 
-    if (result.ok) {
-      const channelId = result.channel as string
-      const messageTs = result.ts as string
-
-      election.slack_message_ts = messageTs
-      election.slack_channel_id = channelId
-      election.slack_team = payload.team_id
-      election.slack_user = payload.user_id
-      await connection.manager.save(election)
-
-      console.log('Created', election.slack_team, election.slack_channel_id, election.slack_message_ts, election.slack_user)
-    } else {
-      throw new Error('ERROR: Could not create message')
-    }
-  })
-
-  app.action('EDIT_ELECTION_POPUP', async ({ ack, body, context }) => {
-    if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
-    await ack()
-
-    const originalMessage = JSON.stringify({ channelId: body.container.channel_id, messageTs: body.container.message_ts })
-    const election = await getDraftElection(body.team.id, body.message.ts, body.user.id)
 
     await app.client.views.open({
       token: context.botToken,
       trigger_id: body.trigger_id,
       view: {
-        private_metadata: originalMessage,
         type: 'modal',
-        callback_id: 'EDIT_DESCRIPTION_MODAL',
-        title: ptext('Edit Poll Description'),
+        private_metadata: JSON.stringify(originalMessage),
+        callback_id: 'CREATE_POLL_MODAL',
+        title: ptext('Create a Poll'),
         close: ptext('Cancel'),
         submit: ptext('Save'),
         blocks: [
@@ -262,14 +226,13 @@ createConnection().then(async connection => {
               type: 'plain_text_input',
               action_id: 'EDIT_DESCRIPTION_TEXT',
               placeholder: ptext('What is this a Poll for?'),
-              initial_value: election.description,
               multiline: true
             }
           },
-          { type: 'section', text: ptext('Choices:\nEnter the candidate or clear the contents to remove the option.') },
+          { type: 'section', text: ptext('Choices:\nEnter the candidates.') },
 
           // Generate 1 textbox for each choice
-          ...election.options.map((candidate, i) => ({
+          ...DEFAULT_CANDIDATES.map((candidate, i) => ({
             type: 'input',
             optional: true,
             block_id: `THE_CANDIDATE:${i}`,
@@ -282,39 +245,206 @@ createConnection().then(async connection => {
             }
           })),
 
-          // Add a new candidate
+          // https://api.slack.com/surfaces/modals/using#modal_response_url
           {
+            block_id: 'MAGIC_BLOCK_ID',
             type: 'input',
             optional: true,
-            block_id: 'THE_CANDIDATE:NEW',
-            label: ptext('New Choice'),
+            label: ptext('Select a channel to post the result on'),
             element: {
-              type: 'plain_text_input',
-              action_id: 'EDIT_CANDIDATE',
-              placeholder: ptext('This is what voters will see. (e.g. Grace Hopper)')
-            }
-          }
+              action_id: 'MAGIC_ACTION_ID',
+              type: 'conversations_select',
+              response_url_enabled: true,
+              default_to_current_conversation: true,
+            },
+          },  
+          
+
         ]
       }
     })
+
   })
 
-  app.view('EDIT_DESCRIPTION_MODAL', async ({ ack, view, context, body }) => {
+  function range(from: number, to: number) {
+    if (to >= from) {
+      const arr = []
+      for (let i = from; i < to; i++) {
+        arr.push(i)
+      }
+      return arr
+    }
+    throw new Error(`BUG: from !<= to '${from}' !<= '${to}'`)
+  }
+  function rankEntry(candidate: number, i: number | null) {
+    if (!i) { // null, 0, or undefined (nothing in the rank array)
+      return { text: ptext('None'), value: cmdIdValue('RANK', candidate, null) }
+    } else {
+      return { text: ptext(`${i}`), value: cmdIdValue('RANK', candidate, i) }
+    }
+  }
+
+  const buildRankingViewBlocks = (candidates: string[], rankedChoices: number[]) => {
+    const maxRank = candidates.length + 1 // Math.max(0, ...rankedChoices) + 1
+
+    return [
+      { type: 'section', text: ptext('Rank the candidates') },
+
+      ...candidates.map((candidate, i) => ({
+        type: 'section',
+        text: mtext(candidate),
+        block_id: `RANK_CANDIDATE_BLOCK:${i}`,
+        accessory: {
+          type: 'static_select',
+          action_id: `RANK_CANDIDATE:${i}`,
+          placeholder: ptext('Rank the Candidate'),
+          initial_option: rankEntry(i, rankedChoices[i]),
+          options: range(0, maxRank+1/*inclusive*/).map(ii => rankEntry(i, ii))
+        }
+      })),
+
+      // Uncomment me as part of: TURN_ON_THE_INPUT_BLOCKS
+      //
+      // ...candidates.map((candidate, i) => ({
+      //   type: 'input',
+      //   label: ptext(candidate),
+      //   block_id: `RANK_CANDIDATE_BLOCK:${i}`,
+      //   element: {
+      //     type: 'static_select',
+      //     action_id: `RANK_CANDIDATE:${i}`,
+      //     placeholder: ptext('Rank the Candidate'),
+      //     initial_option: rankEntry(i, rankedChoices[i]),
+      //     options: range(0, maxRank+1/*inclusive*/).map(ii => rankEntry(i, ii))
+      //   }
+      // })),
+
+    ]
+  }
+
+  const rankCandidatesPopupHandler = async (args) => {
+    const {body, context} = args
+    // console.log(args)
+    const userId = body.user.id
+    const teamId = body.team.id
+    const channelId = body.channel.id
+    const messageTs = body.message.ts
+
+    const election = await getDraftElection(teamId, messageTs)
+    const ballot = await getBallotOrNew(teamId, messageTs, userId)
+
+    await app.client.views.open({
+      token: context.botToken,
+      trigger_id: body.trigger_id,
+      view: {
+        type: 'modal',
+        private_metadata: JSON.stringify({userId, teamId, channelId, messageTs}),
+        callback_id: 'VOTE_MODAL',
+        title: ptext('Vote! Rank Candidates'),
+        // close: ptext('Cancel'),
+        submit: ptext('Save'),
+        blocks: buildRankingViewBlocks(election.options, ballot.ranked_choices)
+      }
+    })
+  }
+
+  app.action('RANK_CANDIDATES_POPUP:0', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:1', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:2', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:3', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:4', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:5', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:6', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:7', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:8', rankCandidatesPopupHandler)
+  app.action('RANK_CANDIDATES_POPUP:9', rankCandidatesPopupHandler)
+
+  app.view('VOTE_MODAL', async (args) => {
+    const {ack, body, payload, view} = args
+    // Uncomment me as part of: TURN_ON_THE_INPUT_BLOCKS
+    // Right now your vote saves every time you change the dropdown
+    // console.log('VOTE_MODAL', view.state)
+    await ack()
+  })
+
+  const rankCandidateHandler = async (args) => {
+    const {ack, body, payload} = args
+    await ack()
+    // console.log('rankingthecandidate', args)
+    console.log('hereisthemetadata', args.body.view.private_metadata)
+    console.log('rankcandidatehandler', args)
+
+    const {messageTs} = JSON.parse(body.view.private_metadata)
+
+    const teamId = body.team.id
+    const userId = body.user.id
+    const ballot = await getBallotOrNew(teamId, messageTs, userId)
+    console.log('ballot', ballot)
+    const indexStr = payload.action_id.split(':')[1]
+    const candidateIndex = Number.parseInt(indexStr)
+    if (Number.isNaN(candidateIndex)) {
+      throw new Error(`BUG: Invalid candidate index '${indexStr}'`)
+    }
+    const {id, value} = JSON.parse(payload.selected_option.value)
+    ballot.ranked_choices[id] = value
+
+    await connection.manager.save(ballot)
+
+  }
+
+  app.action('RANK_CANDIDATE:0', rankCandidateHandler)
+  app.action('RANK_CANDIDATE:1', rankCandidateHandler)
+  app.action('RANK_CANDIDATE:2', rankCandidateHandler)
+  app.action('RANK_CANDIDATE:3', rankCandidateHandler)
+  app.action('RANK_CANDIDATE:4', rankCandidateHandler)
+  app.action('RANK_CANDIDATE:5', rankCandidateHandler)
+  app.action('RANK_CANDIDATE:6', rankCandidateHandler)
+  app.action('RANK_CANDIDATE:7', rankCandidateHandler)
+
+
+  app.view('MAGIC_ACTION_ID', async (args) => {
+    console.log('kjfkwehfwjkehrfwkjehf', args)
+  })
+  
+  app.view('CREATE_POLL_MODAL', async ({ ack, view, context, body, payload }) => {
     ack()
 
-    console.log(view.state.values)
+    const channelId = view.state.values.MAGIC_BLOCK_ID.MAGIC_ACTION_ID.selected_conversation
 
-    const { channelId, messageTs } = JSON.parse(view.private_metadata)
-
-    const election = await getDraftElection(body.team.id, messageTs, body.user.id)
+    const election = new Election()
     election.description = view.state.values.THE_DESCRIPTION_INPUT.EDIT_DESCRIPTION_TEXT.value
 
     const optionKeys = Object.keys(view.state.values).filter(v => v.startsWith('THE_CANDIDATE:'))
     election.options = optionKeys.map(k => view.state.values[k].EDIT_CANDIDATE.value).filter(o => !!o) // remove blank entries
 
-    await connection.manager.save(election)
+    const result = await app.client.chat.postMessage({
+      token: context.botToken,
+      channel: channelId,
+      text: 'The Poll',
+      blocks: buildPollMessageBlcoks(election)
+    })
 
-    await doUpdate(election, context, channelId, messageTs)
+    if (result.ok) {
+      const messageTs = result.ts as string
+      const actualChannelId = result.channel as string
+
+      election.slack_message_ts = messageTs
+      election.slack_channel_id = actualChannelId
+      election.slack_team_id = payload.team_id
+      election.slack_user_id = body.user.id
+
+      if (!election.slack_channel_id || !election.slack_message_ts || !election.slack_user_id) {
+        console.log('invalidmessage or channel', result)
+        throw new Error('Invalid message ts or channel id')
+      }
+
+      await connection.manager.save(election)
+
+      console.log('Created', election.slack_team_id, election.slack_channel_id, election.slack_message_ts, election.slack_user_id)
+    } else {
+      throw new Error('ERROR: Could not create message')
+    }
+
+    // await doUpdate(election, context, channelId, messageTs)
   })
 
   app.action('ADD_CANDIDATE_POPUP', async ({ ack, body, context }) => {
@@ -353,14 +483,14 @@ createConnection().then(async connection => {
     ack()
 
     const { channelId, messageTs } = JSON.parse(view.private_metadata)
-    const election = await getDraftElection(body.team.id, messageTs, body.user.id)
+    const election = await getDraftElection(body.team.id, messageTs)
     const newCandidate = view.state.values.THE_CANDIDATE_INPUT.EDIT_CANDIDATE_TEXT.value
 
     election.options.push(newCandidate)
 
     await connection.manager.save(election)
 
-    await doUpdate(election, context, channelId, messageTs)
+    await doUpdate(election, context)
   })
 
   app.action('EDIT_CANDIDATE', async (args) => {
@@ -370,7 +500,7 @@ createConnection().then(async connection => {
     if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
     if (payload.type !== 'overflow') { throw new Error('Unreachable!') }
 
-    const election = await getDraftElection(body.user.team_id, body.message.ts, body.user.id)
+    const election = await getDraftElection(body.user.team_id, body.message.ts)
 
     const { command, id } = parseCmdIdValue(payload.selected_option.value)
     switch (command) {
@@ -384,7 +514,7 @@ createConnection().then(async connection => {
         // do nothing
     }
 
-    await doUpdate(election, context, body.container.channel_id, body.container.message_ts)
+    await doUpdate(election, context)
   })
 
   app.action('EDIT_SETTINGS', async ({ ack, payload }) => {
@@ -406,7 +536,7 @@ createConnection().then(async connection => {
       channel: body.container.channel_id,
       ts: body.container.message_ts
     })
-    const election = await getDraftElection(body.user.team_id, body.message.ts, body.user.id)
+    const election = await getDraftElection(body.user.team_id, body.message.ts)
     await connection.manager.remove(election)
   })
 

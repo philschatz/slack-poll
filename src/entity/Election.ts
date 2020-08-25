@@ -15,19 +15,16 @@ export class Election {
     @CreateDateColumn()
     created_at: Date
 
-    @Column({nullable: true})
-    published_at: (Date | null)
+    @Column()
+    slack_team_id: string
 
     @Column()
-    slack_team: string
+    slack_user_id: string
 
     @Column()
-    slack_user: string
-
-    @Column({nullable: true}) // only because I am lazy and did not write migration scripts
     slack_message_ts: string
 
-    @Column({nullable: true}) // only because I am lazy and did not write migration scripts
+    @Column()
     slack_channel_id: string
 
     @Column()

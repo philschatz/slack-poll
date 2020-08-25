@@ -10,6 +10,6 @@ export class User {
     @Column()
     slackId: string;
 
-    @OneToMany(() => Ballot, e => e.user, {eager: true})
+    @OneToMany(() => Ballot, e => e.user_id, {eager: true})
     ballots: Ballot[]
 }

@@ -1,6 +1,5 @@
-import {Entity, PrimaryGeneratedColumn, Column, ManyToOne} from "typeorm";
+import {Entity, PrimaryGeneratedColumn, Column, ManyToOne, CreateDateColumn, UpdateDateColumn} from "typeorm";
 import { Election, arrayOptions } from './Election';
-import { User } from './User';
 
 @Entity()
 export class Ballot {
@@ -8,18 +7,18 @@ export class Ballot {
     @PrimaryGeneratedColumn()
     id: number;
 
-    // @CreateDateColumn()
-    // created_at: Date
+    @CreateDateColumn()
+    created_at: Date
 
-    // @UpdateDateColumn()
-    // updated_at: Date
+    @UpdateDateColumn()
+    updated_at: Date
 
     @ManyToOne(() => Election, e => e.ballots)
     election: Election;
 
-    @ManyToOne(() => User, e => e.ballots)
-    user: User
+    @Column()
+    user_id: string
 
     @Column(arrayOptions)
-    rankedChoices: number[]
+    ranked_choices: number[]
 }
