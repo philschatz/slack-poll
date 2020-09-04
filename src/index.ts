@@ -62,7 +62,7 @@ const buildPollMessageBlcoks = (context: Election) => {
   if (context.ballots && context.ballots.length > 0) {
     voterStats = [    {
       type: 'section',
-      text: mtext(`Voters: ${context.ballots.map(b => `@${b.user_id}`).join(' ')}`)
+      text: mtext(`Voters: ${context.ballots.map(b => `<@${b.user_id}>`).join(' ')}`)
     }]
   }
 
@@ -100,7 +100,7 @@ const buildPollMessageBlcoks = (context: Election) => {
       })
     },
 
-    // ...voterStats,
+    ...voterStats,
 
     { type: 'divider' },
 
@@ -137,22 +137,15 @@ createConnection().then(async connection => {
     return election
   }
 
-  async function getDraftElection (teamId: string, messageTs: string) {
-    console.log('Searching for', teamId, messageTs)
-
-    const election = await connection.manager.findOneOrFail(Election, {
-      slack_message_ts: messageTs,
-      slack_team_id: teamId,
-    })
-    return election
+  async function getElection(teamId: string,messageTs: string) {
+    return await connection.manager.findOneOrFail(Election, {slack_team_id: teamId, slack_message_ts: messageTs})
   }
-
   async function getBallotOrNew(teamId: string,messageTs: string, userId: string) {
     if (!teamId || !messageTs || !userId) {
       throw new Error(`Missing args ${teamId} ${messageTs} ${userId}`)
-    }getBallotOrNew
+    }
     console.log(`lookingfor ${teamId} ${messageTs} ${userId}`)
-    const election = await connection.manager.findOneOrFail(Election, {slack_team_id: teamId, slack_message_ts: messageTs})
+    const election = await getElection(teamId, messageTs)
     let ballot = election.ballots.find(b => b.user_id === userId)
     if (!ballot) {
       ballot = new Ballot()
@@ -172,7 +165,7 @@ createConnection().then(async connection => {
       channel: election.slack_channel_id,
       ts: election.slack_message_ts,
       blocks: buildPollMessageBlcoks(election),
-      text: 'Update Draft Poll'
+      text: 'Update Poll'
     })
   }
 
@@ -329,7 +322,7 @@ createConnection().then(async connection => {
     const channelId = body.channel.id
     const messageTs = body.message.ts
 
-    const election = await getDraftElection(teamId, messageTs)
+    const election = await getElection(teamId, messageTs)
     const ballot = await getBallotOrNew(teamId, messageTs, userId)
 
     await app.client.views.open({
@@ -367,7 +360,7 @@ createConnection().then(async connection => {
   })
 
   const rankCandidateHandler = async (args) => {
-    const {ack, body, payload} = args
+    const {ack, body, payload, context} = args
     await ack()
     // console.log('rankingthecandidate', args)
     console.log('hereisthemetadata', args.body.view.private_metadata)
@@ -388,6 +381,7 @@ createConnection().then(async connection => {
     ballot.ranked_choices[id] = value
 
     await connection.manager.save(ballot)
+    await doUpdate(await getElection(teamId, messageTs), context)
 
   }
 
@@ -483,7 +477,7 @@ createConnection().then(async connection => {
     ack()
 
     const { channelId, messageTs } = JSON.parse(view.private_metadata)
-    const election = await getDraftElection(body.team.id, messageTs)
+    const election = await getElection(body.team.id, messageTs)
     const newCandidate = view.state.values.THE_CANDIDATE_INPUT.EDIT_CANDIDATE_TEXT.value
 
     election.options.push(newCandidate)
@@ -500,7 +494,7 @@ createConnection().then(async connection => {
     if (body.type !== 'block_actions') { throw new Error('Unreachable!') }
     if (payload.type !== 'overflow') { throw new Error('Unreachable!') }
 
-    const election = await getDraftElection(body.user.team_id, body.message.ts)
+    const election = await getElection(body.user.team_id, body.message.ts)
 
     const { command, id } = parseCmdIdValue(payload.selected_option.value)
     switch (command) {
@@ -536,7 +530,7 @@ createConnection().then(async connection => {
       channel: body.container.channel_id,
       ts: body.container.message_ts
     })
-    const election = await getDraftElection(body.user.team_id, body.message.ts)
+    const election = await getElection(body.user.team_id, body.message.ts)
     await connection.manager.remove(election)
   })
 
