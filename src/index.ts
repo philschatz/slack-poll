@@ -1,5 +1,6 @@
 import 'reflect-metadata'
 import 'dotenv-safe'
+import * as schulze from 'schulze-method'
 import { App, LogLevel } from '@slack/bolt'
 import { createConnection } from 'typeorm'
 import { Ballot } from './entity/Ballot'
@@ -60,10 +61,56 @@ const buildPollMessageBlcoks = (context: Election) => {
 
   let voterStats = []
   if (context.ballots && context.ballots.length > 0) {
-    voterStats = [    {
+    voterStats.push({
       type: 'section',
       text: mtext(`Voters: ${context.ballots.map(b => `<@${b.user_id}>`).join(' ')}`)
-    }]
+    })
+
+    // compute the winner(s)
+    const ballots = context.ballots.map(b => {
+      const ballot = []
+      context.options.forEach((_, i) => {
+        ballot.push(b.ranked_choices[i] || 1000)
+      })
+      return ballot
+    })
+    const validationErrors = [...schulze.validate(context.options, ballots)]
+    if (validationErrors.length > 0) {
+      voterStats.push({
+        type: 'section',
+        text: ptext('Errors:')
+      })
+      voterStats.push({
+        type: 'section',
+        text: ptext(validationErrors.join('\n'))
+      })
+      voterStats.push({
+        type: 'section',
+        text: ptext(JSON.stringify(ballots))
+      })
+    } else {
+      const rankings = schulze.run(context.options.length, ballots).map(({place, indexes}) => {
+        return `${place}: ${indexes.map(i => context.options[i])}`
+      })
+      voterStats.push({
+        type: 'section',
+        text: mtext('*Results:*')
+      })
+      voterStats.push({
+        type: 'section',
+        text: ptext(rankings.join('\n'))
+      })
+  
+      // voterStats.push({
+      //   type: 'section',
+      //   text: ptext('Ballots:')
+      // })
+      // voterStats.push({
+      //   type: 'section',
+      //   text: ptext(JSON.stringify(ballots))
+      // })
+    }
+
   }
 
   return [
@@ -144,7 +191,7 @@ createConnection().then(async connection => {
     if (!teamId || !messageTs || !userId) {
       throw new Error(`Missing args ${teamId} ${messageTs} ${userId}`)
     }
-    console.log(`lookingfor ${teamId} ${messageTs} ${userId}`)
+    // console.log(`lookingfor ${teamId} ${messageTs} ${userId}`)
     const election = await getElection(teamId, messageTs)
     let ballot = election.ballots.find(b => b.user_id === userId)
     if (!ballot) {
@@ -152,8 +199,8 @@ createConnection().then(async connection => {
       ballot.election = election
       ballot.user_id = userId
       ballot.ranked_choices = []
-    } else {
-      console.log('foundballot', ballot)
+    // } else {
+    //   console.log('foundballot', ballot)
     }
     return ballot
   }
@@ -363,15 +410,15 @@ createConnection().then(async connection => {
     const {ack, body, payload, context} = args
     await ack()
     // console.log('rankingthecandidate', args)
-    console.log('hereisthemetadata', args.body.view.private_metadata)
-    console.log('rankcandidatehandler', args)
+    // console.log('hereisthemetadata', args.body.view.private_metadata)
+    // console.log('rankcandidatehandler', args)
 
     const {messageTs} = JSON.parse(body.view.private_metadata)
 
     const teamId = body.team.id
     const userId = body.user.id
     const ballot = await getBallotOrNew(teamId, messageTs, userId)
-    console.log('ballot', ballot)
+    // console.log('ballot', ballot)
     const indexStr = payload.action_id.split(':')[1]
     const candidateIndex = Number.parseInt(indexStr)
     if (Number.isNaN(candidateIndex)) {
